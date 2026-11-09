@@ -68,7 +68,7 @@ namespace GrayShotV2
             menu.Items.Add("Выход", null, delegate { ExitThread(); });
             tray = new NotifyIcon
             {
-                Icon = SystemIcons.Application, Text = "GrayShotV2 · PrtScr",
+                Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath), Text = "GrayShotV2 · PrtScr",
                 ContextMenuStrip = menu, Visible = true
             };
             tray.DoubleClick += delegate { Capture(); };
@@ -129,7 +129,9 @@ namespace GrayShotV2
             if (disposing)
             {
                 hook.Dispose();
+                var icon = tray.Icon;
                 tray.Dispose();
+                if (icon != null) icon.Dispose();
                 menu.Dispose();
                 dispatcher.Dispose();
             }

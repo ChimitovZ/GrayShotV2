@@ -10,6 +10,7 @@ AppVersion={#AppVersion}
 DefaultDirName={localappdata}\GrayShotV2
 PrivilegesRequired=lowest
 UninstallDisplayIcon={app}\GrayShotV2.exe
+SetupIconFile=..\src\GrayShotV2.ico
 OutputDir=..\dist
 OutputBaseFilename=GrayShotV2-Setup
 RestartApplications=no
