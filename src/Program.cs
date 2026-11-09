@@ -31,12 +31,40 @@ namespace GrayShotV2
         private readonly ContextMenuStrip menu = new ContextMenuStrip();
         private readonly PrintScreenHook hook;
         private Overlay overlay;
+        private bool updating;
 
         public TrayContext()
         {
             dispatcher.CreateControl();
             menu.Items.Add("Сделать снимок", null, delegate { Capture(); });
             menu.Items.Add("Открыть папку снимков", null, delegate { OpenPictures(); });
+            var updateItem = menu.Items.Add("Проверить обновления");
+            updateItem.Click += async delegate
+            {
+                if (overlay != null)
+                {
+                    Report("Завершите работу со снимком перед обновлением.");
+                    return;
+                }
+                updating = true;
+                updateItem.Enabled = false;
+                bool restart = false;
+                try
+                {
+                    restart = await Updater.CheckAndPrepareAsync();
+                }
+                catch (Exception error)
+                {
+                    MessageBox.Show("Не удалось обновить GrayShotV2. " + error.Message,
+                        "GrayShotV2", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                }
+                finally
+                {
+                    updating = false;
+                    updateItem.Enabled = true;
+                }
+                if (restart) ExitThread();
+            };
             menu.Items.Add("Выход", null, delegate { ExitThread(); });
             tray = new NotifyIcon
             {
@@ -52,7 +80,7 @@ namespace GrayShotV2
 
         private void Capture()
         {
-            if (overlay != null) return;
+            if (overlay != null || updating) return;
             Bitmap desktop = null;
             try
             {
@@ -91,7 +119,7 @@ namespace GrayShotV2
 
         protected override void ExitThreadCore()
         {
-            if (overlay != null && overlay.Busy) return;
+            if (updating || (overlay != null && overlay.Busy)) return;
             if (overlay != null) overlay.Close();
             base.ExitThreadCore();
         }
