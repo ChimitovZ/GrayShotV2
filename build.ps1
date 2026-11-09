@@ -1,10 +1,11 @@
+param([string]$OutputDirectory = (Join-Path $PSScriptRoot 'dist'))
+
 $ErrorActionPreference = 'Stop'
 $compiler = Join-Path $env:WINDIR 'Microsoft.NET\Framework\v4.0.30319\csc.exe'
 if (-not (Test-Path -LiteralPath $compiler)) {
     throw 'The Windows .NET Framework 4.8 compiler is required.'
 }
-$output = Join-Path $PSScriptRoot 'dist'
-New-Item -ItemType Directory -Path $output -Force | Out-Null
+$output = (New-Item -ItemType Directory -Path $OutputDirectory -Force).FullName
 $sources = Get-ChildItem -LiteralPath (Join-Path $PSScriptRoot 'src') -Filter '*.cs' -File
 $manifest = Join-Path $PSScriptRoot 'src\app.manifest'
 $exe = Join-Path $output 'GrayShotV2.exe'
