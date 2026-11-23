@@ -9,7 +9,7 @@ namespace GrayShotV2
 
     internal static class ToolInfo
     {
-        private static readonly string[] Labels = { "Карандаш", "Стрелка", "Прямоугольник", "Текст",
+        private static readonly string[] Labels = { "Карандаш", "Стрелка", "Рамка", "Текст",
             "Размытие", "Отменить", "Копировать" };
         private static readonly string[] Shortcuts = { "F", "A", "R", "T", "B", "Ctrl+Z", "Ctrl+C" };
         public static int Count { get { return Labels.Length; } }

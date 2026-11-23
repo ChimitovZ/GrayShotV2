@@ -1,5 +1,4 @@
 using System.Drawing;
-using System.Drawing.Drawing2D;
 using System.Windows.Forms;
 
 namespace GrayShotV2
@@ -35,46 +34,44 @@ namespace GrayShotV2
             return false;
         }
 
-        public static void Draw(Graphics g, Rectangle area, Font font, StrokeStyle style)
+        public static void Draw(Graphics g, Rectangle area, Font font, StrokeStyle style, WindowsAppearance appearance)
         {
-            GraphicsState state = g.Save();
-            g.SmoothingMode = SmoothingMode.AntiAlias;
-            using (var border = new Pen(Color.FromArgb(96, 107, 128)))
-            using (var accent = new Pen(RadialMenu.Accent, 1.5f))
-            using (var active = new SolidBrush(Color.FromArgb(52, 76, 84)))
+            using (var border = new Pen(appearance.Border))
             {
-                foreach (int offset in new[] { ColorStart - 6, WidthStart - 8 })
-                    g.DrawLine(border, area.X + offset, area.Y + 8, area.X + offset, area.Bottom - 8);
-
+                g.DrawLine(border, area.X + ColorStart - 6, area.Y + 8,
+                    area.X + ColorStart - 6, area.Bottom - 8);
+                g.DrawLine(border, area.X + WidthStart - 8, area.Y + 8,
+                    area.X + WidthStart - 8, area.Bottom - 8);
+            }
+            using (var swatchBorder = new Pen(appearance.Text))
+            {
                 for (int i = 0; i < Colors.Length; i++)
                 {
-                    Rectangle cell = Cell(area, ColorStart, ColorCell, i);
-                    var swatch = new Rectangle(cell.X + 5, cell.Y + 7, 15, 15);
-                    using (var fill = new SolidBrush(Colors[i])) g.FillEllipse(fill, swatch);
-                    g.DrawEllipse(border, swatch);
+                    Rectangle cell = Rectangle.Inflate(Cell(area, ColorStart, ColorCell, i), -2, -1);
                     if (Colors[i].ToArgb() == style.Color.ToArgb())
-                        g.DrawEllipse(accent, Rectangle.Inflate(swatch, 3, 3));
+                        g.FillRectangle(SystemBrushes.Highlight, cell);
+                    var swatch = new Rectangle(cell.X + 3, cell.Y + 5, 15, 15);
+                    using (var fill = new SolidBrush(Colors[i])) g.FillRectangle(fill, swatch);
+                    g.DrawRectangle(swatchBorder, swatch.X, swatch.Y, swatch.Width - 1, swatch.Height - 1);
                 }
+            }
 
+            using (var inkBrush = new SolidBrush(appearance.Text))
+            {
                 for (int i = 0; i < Thicknesses.Length; i++)
                 {
                     int thickness = Thicknesses[i];
                     Rectangle cell = Rectangle.Inflate(Cell(area, WidthStart, WidthCell, i), -2, -1);
                     bool selected = thickness == style.Width;
-                    if (selected)
-                    {
-                        g.FillRectangle(active, cell);
-                        g.DrawRectangle(accent, cell.X, cell.Y, cell.Width - 1, cell.Height - 1);
-                    }
-                    Color ink = selected ? RadialMenu.Accent : Color.White;
+                    if (selected) g.FillRectangle(SystemBrushes.Highlight, cell);
+                    Color ink = selected ? SystemColors.HighlightText : appearance.Text;
                     var label = new Rectangle(cell.X, cell.Y + 1, cell.Width, 13);
                     TextRenderer.DrawText(g, thickness.ToString(), font, label, ink,
                         TextFormatFlags.HorizontalCenter | TextFormatFlags.NoPadding | TextFormatFlags.PreserveGraphicsClipping);
-                    using (var line = new Pen(ink, thickness) { StartCap = LineCap.Round, EndCap = LineCap.Round })
-                        g.DrawLine(line, cell.X + 6, cell.Bottom - 7, cell.Right - 7, cell.Bottom - 7);
+                    g.FillRectangle(selected ? SystemBrushes.HighlightText : inkBrush,
+                        cell.X + 6, cell.Bottom - 7 - thickness / 2, cell.Width - 12, thickness);
                 }
             }
-            g.Restore(state);
         }
     }
 }

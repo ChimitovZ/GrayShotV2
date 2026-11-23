@@ -28,7 +28,7 @@ namespace GrayShotV2
     {
         private readonly Control dispatcher = new Control();
         private readonly NotifyIcon tray;
-        private readonly ContextMenuStrip menu = new ContextMenuStrip();
+        private readonly ContextMenuStrip menu = new ContextMenuStrip { RenderMode = ToolStripRenderMode.System };
         private readonly PrintScreenHook hook;
         private Overlay overlay;
         private bool updating;
@@ -65,7 +65,9 @@ namespace GrayShotV2
                 }
                 if (restart) ExitThread();
             };
+            menu.Items.Add(new ToolStripSeparator());
             menu.Items.Add("Выход", null, delegate { ExitThread(); });
+            menu.Opening += delegate { ApplyMenuAppearance(WindowsAppearance.Read()); };
             tray = new NotifyIcon
             {
                 Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath), Text = "GrayShotV2 · PrtScr",
@@ -76,6 +78,16 @@ namespace GrayShotV2
             if (hook.Error != 0)
                 Report("Клавиша PrtScr недоступна. Снимок можно сделать через меню в трее. " +
                        new Win32Exception(hook.Error).Message);
+        }
+
+        private void ApplyMenuAppearance(WindowsAppearance appearance)
+        {
+            if (appearance.Dark)
+                menu.Renderer = new DarkTrayMenuRenderer(appearance);
+            else
+                menu.RenderMode = ToolStripRenderMode.System;
+            menu.Opacity = appearance.Transparency ? 0.95 : 1;
+            menu.AllowTransparency = appearance.Transparency;
         }
 
         private void Capture()
@@ -136,6 +148,49 @@ namespace GrayShotV2
                 dispatcher.Dispose();
             }
             base.Dispose(disposing);
+        }
+    }
+
+    internal sealed class DarkTrayMenuRenderer : ToolStripSystemRenderer
+    {
+        private readonly WindowsAppearance appearance;
+
+        public DarkTrayMenuRenderer(WindowsAppearance appearance)
+        {
+            this.appearance = appearance;
+        }
+
+        protected override void OnRenderToolStripBackground(ToolStripRenderEventArgs e)
+        {
+            using (var fill = new SolidBrush(appearance.Surface))
+                e.Graphics.FillRectangle(fill, e.AffectedBounds);
+        }
+
+        protected override void OnRenderToolStripBorder(ToolStripRenderEventArgs e)
+        {
+            using (var pen = new Pen(appearance.Border))
+                e.Graphics.DrawRectangle(pen, 0, 0, e.ToolStrip.Width - 1, e.ToolStrip.Height - 1);
+        }
+
+        protected override void OnRenderMenuItemBackground(ToolStripItemRenderEventArgs e)
+        {
+            if (e.Item.Selected || e.Item.Pressed)
+            {
+                using (var fill = new SolidBrush(appearance.Inset))
+                    e.Graphics.FillRectangle(fill, new Rectangle(Point.Empty, e.Item.Size));
+            }
+        }
+
+        protected override void OnRenderItemText(ToolStripItemTextRenderEventArgs e)
+        {
+            e.TextColor = e.Item.Enabled ? appearance.Text : Color.FromArgb(160, 160, 160);
+            base.OnRenderItemText(e);
+        }
+
+        protected override void OnRenderSeparator(ToolStripSeparatorRenderEventArgs e)
+        {
+            using (var pen = new Pen(appearance.Border))
+                e.Graphics.DrawLine(pen, 6, e.Item.Height / 2, e.Item.Width - 7, e.Item.Height / 2);
         }
     }
 }

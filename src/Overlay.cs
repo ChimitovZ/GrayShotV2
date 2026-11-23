@@ -18,9 +18,9 @@ namespace GrayShotV2
         private readonly Stack<Action> history = new Stack<Action>();
         private readonly StrokeStyle[] toolStrokes = { StrokeStyle.Default, StrokeStyle.Default, StrokeStyle.Default };
         private readonly Font annotationFont = new Font("Segoe UI", 22, FontStyle.Bold, GraphicsUnit.Pixel);
-        private readonly Font menuFont = new Font("Segoe UI", 12, FontStyle.Bold, GraphicsUnit.Pixel);
-        private readonly Brush shade = new SolidBrush(Color.FromArgb(143, 8, 10, 20));
-        private readonly Pen outline = new Pen(RadialMenu.Accent);
+        private readonly Font menuFont = new Font("Segoe UI", 12, FontStyle.Regular, GraphicsUnit.Pixel);
+        private readonly Brush shade = new SolidBrush(Color.FromArgb(128, Color.Black));
+        private WindowsAppearance appearance = WindowsAppearance.Read();
         private Rectangle selection;
         private Point anchor;
         private bool selecting;
@@ -64,6 +64,18 @@ namespace GrayShotV2
                      ControlStyles.OptimizedDoubleBuffer | ControlStyles.Opaque, true);
         }
 
+        protected override void WndProc(ref Message m)
+        {
+            base.WndProc(ref m);
+            const int systemColorsChanged = 0x0015, settingsChanged = 0x001A, themeChanged = 0x031A;
+            if (m.Msg == systemColorsChanged || m.Msg == settingsChanged || m.Msg == themeChanged)
+            {
+                appearance = WindowsAppearance.Read();
+                if (textEditor != null) ApplyTextEditorAppearance();
+                Invalidate();
+            }
+        }
+
         protected override void OnPaint(PaintEventArgs e)
         {
             Graphics g = e.Graphics;
@@ -85,22 +97,29 @@ namespace GrayShotV2
                 if (active != null && active != editedText && clip.IntersectsWith(active.PaintBounds()))
                     DrawObjectSelection(g);
                 g.Restore(state);
-                g.DrawRectangle(outline, selection.X, selection.Y, selection.Width - 1, selection.Height - 1);
+                g.DrawRectangle(SystemPens.Highlight, selection.X, selection.Y, selection.Width - 1, selection.Height - 1);
             }
             if (selected && clip.IntersectsWith(toolHintArea))
                 DrawToolHint(g);
             if (ring != null && clip.IntersectsWith(ring.Bounds))
-            {
-                g.SmoothingMode = SmoothingMode.AntiAlias;
-                ring.Draw(g, tool);
-            }
+                ring.Draw(g, tool, appearance, DrawBlur);
             if (status != null && clip.IntersectsWith(statusArea))
             {
-                g.FillRectangle(Brushes.Black, statusArea);
+                DrawPanel(g, statusArea);
                 TextRenderer.DrawText(g, status, menuFont, Rectangle.Inflate(statusArea, -12, -6),
-                    Color.White, TextFormatFlags.WordBreak | TextFormatFlags.VerticalCenter |
+                    appearance.Text, TextFormatFlags.WordBreak | TextFormatFlags.VerticalCenter |
                     TextFormatFlags.NoPrefix | TextFormatFlags.PreserveGraphicsClipping);
             }
+        }
+
+        private void DrawPanel(Graphics g, Rectangle area)
+        {
+            if (appearance.Transparency)
+                DrawBlur(g, area);
+            using (var fill = new SolidBrush(appearance.SurfaceTint))
+                g.FillRectangle(fill, area);
+            using (var border = new Pen(appearance.Border))
+                g.DrawRectangle(border, area.X, area.Y, area.Width - 1, area.Height - 1);
         }
 
         private void DrawAnnotations(Graphics g, Rectangle clip, bool preview)
@@ -123,6 +142,8 @@ namespace GrayShotV2
 
         private void DrawBlur(Graphics g, Rectangle area)
         {
+            area = Rectangle.Intersect(area, new Rectangle(Point.Empty, desktop.Size));
+            if (area.Width == 0 || area.Height == 0) return;
             const int blurScale = 14;
             int width = (area.Width + blurScale - 1) / blurScale;
             int height = (area.Height + blurScale - 1) / blurScale;
@@ -150,22 +171,21 @@ namespace GrayShotV2
             Annotation target = StrokeObject;
             string shortcut = target == null ? ToolInfo.Shortcut(tool) : "";
             string label = target == null ? ToolInfo.Label(tool) :
-                "Объект · " + (target.Tool == Tool.Frame ? "Рамка" : ToolInfo.Label(target.Tool));
+                "Объект · " + ToolInfo.Label(target.Tool);
             var textArea = Rectangle.Inflate(toolHintArea, -9, 0);
-            using (var background = new SolidBrush(Color.FromArgb(240, 19, 24, 35)))
-                g.FillRectangle(background, toolHintArea);
+            DrawPanel(g, toolHintArea);
             TextFormatFlags flags = TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding |
                 TextFormatFlags.PreserveGraphicsClipping;
             if (shortcut.Length != 0)
             {
                 var keyArea = new Rectangle(textArea.X, textArea.Y, 21, textArea.Height);
-                TextRenderer.DrawText(g, shortcut, menuFont, keyArea, RadialMenu.Accent, flags);
+                TextRenderer.DrawText(g, shortcut, menuFont, keyArea, appearance.Text, flags);
                 textArea.X += keyArea.Width;
                 textArea.Width -= keyArea.Width;
             }
             textArea.Width = Math.Min(textArea.Width, 136 - (shortcut.Length == 0 ? 0 : 21));
-            TextRenderer.DrawText(g, label, menuFont, textArea, Color.White, flags);
-            if (HasStrokePalette) StrokePalette.Draw(g, toolHintArea, menuFont, CurrentStroke);
+            TextRenderer.DrawText(g, label, menuFont, textArea, appearance.Text, flags);
+            if (HasStrokePalette) StrokePalette.Draw(g, toolHintArea, menuFont, CurrentStroke, appearance);
         }
 
         private void PlaceToolHint()
@@ -209,13 +229,16 @@ namespace GrayShotV2
         private void DrawObjectSelection(Graphics g)
         {
             var bounds = Rectangle.Inflate(active.Bounds, 4, 4);
-            using (var border = new Pen(Color.DeepSkyBlue) { DashStyle = DashStyle.Dash })
+            using (var border = new Pen(SystemColors.Highlight) { DashStyle = DashStyle.Dash })
                 g.DrawRectangle(border, bounds);
-            foreach (Point handle in active.Handles())
+            using (var fill = new SolidBrush(appearance.Inset))
             {
-                var box = new Rectangle(handle.X - 3, handle.Y - 3, 7, 7);
-                g.FillRectangle(Brushes.White, box);
-                g.DrawRectangle(Pens.DeepSkyBlue, box);
+                foreach (Point handle in active.Handles())
+                {
+                    var box = new Rectangle(handle.X - 3, handle.Y - 3, 7, 7);
+                    g.FillRectangle(fill, box);
+                    g.DrawRectangle(SystemPens.Highlight, box.X, box.Y, box.Width - 1, box.Height - 1);
+                }
             }
         }
 
@@ -640,11 +663,19 @@ namespace GrayShotV2
             const int width = 240;
             int x = Math.Max(monitor.Left, Math.Min(point.X, monitor.Right - width));
             int y = Math.Max(monitor.Top, Math.Min(point.Y, monitor.Bottom - 34));
-            textEditor = new TextBox { Font = annotationFont, MaxLength = 512, Location = new Point(x, y), Width = width,
+            textEditor = new TextBox { Font = annotationFont, BorderStyle = BorderStyle.FixedSingle,
+                                       MaxLength = 512, Location = new Point(x, y), Width = width,
                                        Text = annotation == null ? "" : annotation.Text };
+            ApplyTextEditorAppearance();
             Controls.Add(textEditor);
             textEditor.Focus();
             if (annotation != null) textEditor.SelectAll();
+        }
+
+        private void ApplyTextEditorAppearance()
+        {
+            textEditor.BackColor = appearance.Inset;
+            textEditor.ForeColor = appearance.Text;
         }
 
         private void FinishText(bool commit)
@@ -768,7 +799,6 @@ namespace GrayShotV2
                 annotationFont.Dispose();
                 menuFont.Dispose();
                 shade.Dispose();
-                outline.Dispose();
             }
             base.Dispose(disposing);
         }

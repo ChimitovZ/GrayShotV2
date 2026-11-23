@@ -8,24 +8,23 @@ namespace GrayShotV2
     internal sealed class RadialMenu : IDisposable
     {
         private static readonly float Step = 360f / ToolInfo.Count;
-        internal static readonly Color Accent = Color.FromArgb(164, 239, 218);
-        private const int Shadow = 14;
+        private const int EdgeMargin = 15;
         private readonly int outer, inner, reach;
         private readonly Font font, caption;
         public Point Center { get; private set; }
         public int Hover = -1;
-        public Rectangle Bounds { get { return Circle(outer + Shadow + 1); } }
+        public Rectangle Bounds { get { return Circle(outer + EdgeMargin); } }
 
         public RadialMenu(Point origin, Rectangle monitor)
         {
             outer = Math.Min(270, (int)(Math.Min(monitor.Width, monitor.Height) * 0.195));
-            int margin = outer + Shadow + 1;
+            int margin = outer + EdgeMargin;
             Center = new Point(Math.Max(monitor.Left + margin, Math.Min(origin.X, monitor.Right - margin)),
                                Math.Max(monitor.Top + margin, Math.Min(origin.Y, monitor.Bottom - margin)));
             inner = (int)(outer * 0.32);
             reach = outer + Math.Max(10, outer / 14);
-            font = new Font("Segoe UI Semibold", Math.Max(12, outer / 13), FontStyle.Regular, GraphicsUnit.Pixel);
-            caption = new Font("Segoe UI", Math.Max(10, outer / 17), FontStyle.Regular, GraphicsUnit.Pixel);
+            font = new Font("Segoe UI", Math.Max(12, Math.Min(16, outer / 13)), FontStyle.Regular, GraphicsUnit.Pixel);
+            caption = new Font("Segoe UI", Math.Max(10, Math.Min(12, outer / 17)), FontStyle.Regular, GraphicsUnit.Pixel);
         }
 
         private Rectangle Circle(int radius)
@@ -48,59 +47,69 @@ namespace GrayShotV2
             return (int)((angle + Step / 2) % 360 / Step);
         }
 
-        public void Draw(Graphics g, Tool selected)
+        public void Draw(Graphics g, Tool selected, WindowsAppearance appearance, Action<Graphics, Rectangle> drawBlur)
         {
             Rectangle shell = Circle(outer), rim = Circle(outer - 6), hub = Circle(inner);
-            using (var shadow = new SolidBrush(Color.FromArgb(16, 3, 4, 12)))
-            using (var baseBrush = new SolidBrush(Color.FromArgb(244, 14, 17, 28)))
-            using (var normal = new LinearGradientBrush(shell, Color.FromArgb(46, 49, 67), Color.FromArgb(28, 31, 46), 80f))
-            using (var active = new SolidBrush(Color.FromArgb(48, 59, 73)))
-            using (var hovered = new LinearGradientBrush(shell, Color.FromArgb(70, 109, 105), Color.FromArgb(37, 72, 77), 65f))
-            using (var border = new Pen(Color.FromArgb(76, 85, 105)) { LineJoin = LineJoin.Round })
-            using (var highlight = new Pen(Accent, 1.6f) { StartCap = LineCap.Round, EndCap = LineCap.Round, LineJoin = LineJoin.Round })
-            using (var indicator = new SolidBrush(Accent))
+            GraphicsState state = g.Save();
+            g.SmoothingMode = SmoothingMode.AntiAlias;
+            if (!appearance.HighContrast)
             {
-                for (int spread = Shadow; spread > 0; spread -= 2) g.FillEllipse(shadow, Circle(outer + spread));
-                g.FillEllipse(baseBrush, shell);
+                Rectangle shadowBounds = Circle(outer + 2);
+                shadowBounds.Offset(0, 3);
+                using (var shadow = new SolidBrush(Color.FromArgb(48, Color.Black)))
+                    g.FillEllipse(shadow, shadowBounds);
+            }
+            if (appearance.Transparency)
+            {
+                GraphicsState backdrop = g.Save();
+                using (var path = new GraphicsPath())
+                {
+                    path.AddEllipse(shell);
+                    g.SetClip(path, CombineMode.Intersect);
+                }
+                drawBlur(g, shell);
+                g.Restore(backdrop);
+            }
+            using (var surface = new SolidBrush(appearance.SurfaceTint))
+            using (var inset = new SolidBrush(appearance.InsetTint))
+            using (var border = new Pen(appearance.Border))
+            {
+                g.FillEllipse(surface, shell);
                 g.DrawEllipse(border, shell);
-                g.DrawEllipse(border, Circle(inner - 6));
+                g.FillEllipse(inset, hub);
+                g.DrawEllipse(border, hub);
+
+                int radius = (int)(outer * 0.66);
                 for (int i = 0; i < ToolInfo.Count; i++)
                 {
                     Tool tool = (Tool)i;
                     float angle = -90 + i * Step;
                     float start = angle - Step / 2;
                     bool isHovered = i == Hover;
-                    bool isActive = i == (int)selected;
+                    bool isActive = tool == selected;
                     using (var path = new GraphicsPath())
                     {
                         path.AddArc(rim, start + 0.9f, Step - 1.8f);
                         path.AddArc(hub, start + Step - 2.7f, -Step + 5.4f);
                         path.CloseFigure();
-                        Brush fill = isHovered ? (Brush)hovered : isActive ? active : (Brush)normal;
-                        g.FillPath(fill, path);
-                        g.DrawPath(isHovered ? highlight : border, path);
+                        g.FillPath(isHovered ? SystemBrushes.Highlight : inset, path);
+                        g.DrawPath(isHovered || isActive ? SystemPens.Highlight : border, path);
                     }
-                    int radius = (int)(outer * 0.66);
+
                     Point label = AtRadius(radius, angle);
-                    Color ink = isHovered ? Accent : Color.FromArgb(231, 237, 250);
+                    Color ink = isHovered ? SystemColors.HighlightText : appearance.Text;
                     DrawIcon(g, tool, label.X, label.Y - font.Height / 2 - 5, outer / 205f, ink);
                     DrawLabel(g, ToolInfo.Label(tool), font, ink,
                         new Rectangle(label.X - radius / 2, label.Y, radius, font.Height + 2));
-                    DrawLabel(g, ToolInfo.Shortcut(tool), caption, Accent,
+                    DrawLabel(g, ToolInfo.Shortcut(tool), caption, ink,
                         new Rectangle(label.X - radius / 2, label.Y + font.Height, radius, caption.Height + 2));
-                    if (isActive && !isHovered)
-                    {
-                        Point dot = AtRadius(outer - 13, angle);
-                        g.FillEllipse(indicator, dot.X - 2, dot.Y - 2, 4, 4);
-                    }
                 }
-                if (Hover >= 0)
-                    g.DrawArc(highlight, shell, -90 + Hover * Step - Step / 2 + 7, Step - 14);
-                DrawLabel(g, Hover < 0 ? "Выбор" : ToolInfo.Label((Tool)Hover), font,
-                    Hover < 0 ? Color.White : Accent, new Rectangle(hub.X, Center.Y - font.Height, hub.Width, font.Height));
-                DrawLabel(g, Hover < 0 ? "Esc · отмена" : "Отпустите ПКМ", caption, Color.FromArgb(178, 188, 207),
-                    new Rectangle(hub.X, Center.Y + 2, hub.Width, caption.Height + 2));
             }
+            DrawLabel(g, Hover < 0 ? "Выбор" : ToolInfo.Label((Tool)Hover), font, appearance.Text,
+                new Rectangle(hub.X, Center.Y - font.Height, hub.Width, font.Height));
+            DrawLabel(g, Hover < 0 ? "Esc · отмена" : "Отпустите ПКМ", caption, appearance.Text,
+                new Rectangle(hub.X, Center.Y + 2, hub.Width, caption.Height + 2));
+            g.Restore(state);
         }
 
         private Point AtRadius(int radius, float angle)
