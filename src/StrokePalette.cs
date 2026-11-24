@@ -16,12 +16,14 @@ namespace GrayShotV2
             return new Rectangle(area.X + start + index * size, area.Y + 3, size, area.Height - 6);
         }
 
-        public static bool TryPick(Rectangle area, Point point, StrokeStyle current, out StrokeStyle style)
+        public static bool TryPick(Rectangle area, Point point, StrokeStyle current, out StrokeStyle style, out bool colorPicked)
         {
+            colorPicked = false;
             for (int i = 0; i < Colors.Length; i++)
                 if (Cell(area, ColorStart, ColorCell, i).Contains(point))
                 {
                     style = new StrokeStyle(Colors[i], current.Width);
+                    colorPicked = true;
                     return true;
                 }
             for (int i = 0; i < Thicknesses.Length; i++)
