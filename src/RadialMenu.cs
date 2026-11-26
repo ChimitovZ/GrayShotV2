@@ -152,6 +152,11 @@ namespace GrayShotV2
                         g.DrawLine(pen, -6, 0, 6, 0);
                         g.DrawLine(pen, -5, 4, 5, 4);
                         break;
+                    case Tool.Highlight:
+                        g.DrawPolygon(pen, new[] { new Point(-7, 4), new Point(-3, 7), new Point(10, -4),
+                            new Point(4, -10), new Point(-6, -1) });
+                        g.DrawLine(pen, -11, 10, 9, 10);
+                        break;
                     case Tool.Undo:
                         g.DrawArc(pen, -10, -5, 20, 16, -145, 220);
                         g.DrawLines(pen, new[] { new Point(-9, -9), new Point(-10, -1), new Point(-2, -1) });

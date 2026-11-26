@@ -12,6 +12,7 @@ namespace GrayShotV2
     {
         public const string DefaultNamePattern = "GrayShotV2_{yyyy}-{MM}-{dd}_{HH}-{mm}-{ss}-{fff}";
         public const Keys DefaultCopyKey = Keys.Control | Keys.C;
+        private const Keys DefaultHighlightKey = Keys.H;
         private static readonly Regex DateToken = new Regex(@"\{(yyyy|MM|dd|HH|mm|ss|fff)\}");
         private static readonly Regex ReservedName = new Regex(
             @"^(CON|PRN|AUX|NUL|COM[1-9¹²³]|LPT[1-9¹²³]|CONIN\$|CONOUT\$) *(\.|$)",
@@ -26,7 +27,8 @@ namespace GrayShotV2
         public ShotSettings()
         {
             CaptureKey = Keys.PrintScreen;
-            ToolKeys = new[] { Keys.F, Keys.A, Keys.R, Keys.T, Keys.B, Keys.Control | Keys.Z, DefaultCopyKey };
+            ToolKeys = new[] { Keys.F, Keys.A, Keys.R, Keys.T, Keys.B, Keys.Control | Keys.Z, DefaultCopyKey,
+                DefaultHighlightKey };
             HiddenTools = new Tool[0];
             NamePattern = DefaultNamePattern;
         }
@@ -99,6 +101,15 @@ namespace GrayShotV2
                 if (!File.Exists(path)) return new ShotSettings();
                 var settings = new JavaScriptSerializer().Deserialize<ShotSettings>(File.ReadAllText(path));
                 if (settings == null || settings.NamePattern == null) return new ShotSettings();
+                if (settings.ToolKeys != null && settings.ToolKeys.Length == (int)Tool.Highlight)
+                {
+                    Keys shortcut = DefaultHighlightKey;
+                    while (shortcut == settings.CaptureKey || Array.IndexOf(settings.ToolKeys, shortcut) >= 0) shortcut++;
+                    Keys[] keys = settings.ToolKeys;
+                    Array.Resize(ref keys, ToolInfo.Count);
+                    keys[(int)Tool.Highlight] = shortcut;
+                    settings.ToolKeys = keys;
+                }
                 settings.ValidateShortcuts();
                 settings.Folder = NormalizeFolder(settings.Folder);
                 FileStem(settings.NamePattern, DateTime.Now);

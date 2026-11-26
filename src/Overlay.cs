@@ -15,6 +15,7 @@ namespace GrayShotV2
         private const int GripRadius = 4;
         private const int LensRadius = 8, LensScale = 6, LensBorder = 2;
         private const int LensSize = (2 * LensRadius + 1) * LensScale + 2 * LensBorder;
+        private static readonly ColorMatrix HighlightTint = new ColorMatrix { Matrix11 = 0.95f, Matrix22 = 0.25f };
         private static readonly Point[] GripDirections =
         {
             new Point(-1, -1), new Point(1, -1), new Point(1, 1), new Point(-1, 1),
@@ -269,23 +270,59 @@ namespace GrayShotV2
 
         private void DrawAnnotations(Graphics g, Rectangle clip, bool preview)
         {
-            // Blur the screenshot layer so existing annotations stay sharp.
-            foreach (Annotation annotation in annotations)
-                if (annotation.Tool == Tool.Blur && clip.IntersectsWith(annotation.Bounds))
-                    DrawBlur(g, annotation.Bounds);
-            if (preview && pending != null && pending.Tool == Tool.Blur && clip.IntersectsWith(pending.Bounds))
-                DrawBlur(g, pending.Bounds);
+            Annotation draft = preview ? pending : null;
+            DrawScreenshotEffects(g, Rectangle.Intersect(clip, selection), draft);
 
             g.SmoothingMode = SmoothingMode.AntiAlias;
             g.TextRenderingHint = TextRenderingHint.AntiAliasGridFit;
             foreach (Annotation annotation in annotations)
-                if (annotation.Tool != Tool.Blur && annotation != editedText && clip.IntersectsWith(annotation.PaintBounds()))
+                if (!ToolInfo.IsScreenshotEffect(annotation.Tool) && annotation != editedText && clip.IntersectsWith(annotation.PaintBounds()))
                     annotation.Draw(g, annotationFont);
-            if (preview && pending != null && pending.Tool != Tool.Blur && clip.IntersectsWith(pending.PaintBounds()))
-                pending.Draw(g, annotationFont);
+            if (draft != null && !ToolInfo.IsScreenshotEffect(draft.Tool) && clip.IntersectsWith(draft.PaintBounds()))
+                draft.Draw(g, annotationFont);
+        }
+
+        private void DrawScreenshotEffects(Graphics g, Rectangle clip, Annotation draft)
+        {
+            using (var highlighted = new Region(Rectangle.Empty))
+            {
+                foreach (Annotation annotation in annotations)
+                    if (annotation.Tool == Tool.Highlight && clip.IntersectsWith(annotation.Bounds))
+                        highlighted.Union(Rectangle.Intersect(clip, annotation.Bounds));
+                if (draft != null && draft.Tool == Tool.Highlight && clip.IntersectsWith(draft.Bounds))
+                    highlighted.Union(Rectangle.Intersect(clip, draft.Bounds));
+
+                Region tint = highlighted.IsEmpty(g) ? null : highlighted;
+                if (tint != null) DrawHighlight(g, tint);
+                // Tint the blurred pixels in overlaps to preserve the blur.
+                foreach (Annotation annotation in annotations)
+                    if (annotation.Tool == Tool.Blur && clip.IntersectsWith(annotation.Bounds))
+                        DrawBlur(g, annotation.Bounds, tint);
+                if (draft != null && draft.Tool == Tool.Blur && clip.IntersectsWith(draft.Bounds))
+                    DrawBlur(g, draft.Bounds, tint);
+            }
+        }
+
+        private void DrawHighlight(Graphics g, Region highlighted)
+        {
+            Rectangle area = Rectangle.Round(highlighted.GetBounds(g));
+            GraphicsState state = g.Save();
+            g.SetClip(highlighted, CombineMode.Intersect);
+            g.InterpolationMode = InterpolationMode.NearestNeighbor;
+            using (var tint = new ImageAttributes())
+            {
+                tint.SetColorMatrix(HighlightTint);
+                g.DrawImage(desktop, area, area.X, area.Y, area.Width, area.Height, GraphicsUnit.Pixel, tint);
+            }
+            g.Restore(state);
         }
 
         private void DrawBlur(Graphics g, Rectangle area)
+        {
+            DrawBlur(g, area, null);
+        }
+
+        private void DrawBlur(Graphics g, Rectangle area, Region highlighted)
         {
             area = Rectangle.Intersect(area, new Rectangle(Point.Empty, desktop.Size));
             if (area.Width == 0 || area.Height == 0) return;
@@ -306,6 +343,15 @@ namespace GrayShotV2
                 {
                     edges.SetWrapMode(WrapMode.TileFlipXY);
                     g.DrawImage(sample, area, 0, 0, width, height, GraphicsUnit.Pixel, edges);
+                    if (highlighted != null)
+                    {
+                        g.SetClip(highlighted, CombineMode.Intersect);
+                        if (!g.IsClipEmpty)
+                        {
+                            edges.SetColorMatrix(HighlightTint);
+                            g.DrawImage(sample, area, 0, 0, width, height, GraphicsUnit.Pixel, edges);
+                        }
+                    }
                 }
                 g.Restore(state);
             }
@@ -524,7 +570,7 @@ namespace GrayShotV2
                 Invalidate(annotation.Update(Clamp(e.Location, selection)));
                 AddAnnotation(annotation);
                 pending = null;
-                if (annotation.Tool == Tool.Frame) SetActive(annotation);
+                if (annotation.Tool == Tool.Frame || annotation.Tool == Tool.Highlight) SetActive(annotation);
                 Capture = false;
             }
             UpdatePointer(e.Location);
@@ -808,7 +854,8 @@ namespace GrayShotV2
             history.Push(delegate
             {
                 annotations.Insert(index, annotation);
-                SetActive(annotation);
+                if (CanSelectAnnotation(annotation)) SetActive(annotation);
+                else Invalidate(annotation.PaintBounds());
             });
             RefreshPointer();
         }
@@ -824,15 +871,21 @@ namespace GrayShotV2
 
         private Annotation HitAnnotation(Point point)
         {
-            Annotation blur = null;
+            Annotation effect = null;
             for (int i = annotations.Count - 1; i >= 0; i--)
             {
                 Annotation annotation = annotations[i];
-                if (!annotation.Hit(point)) continue;
-                if (annotation.Tool != Tool.Blur) return annotation;
-                if (blur == null) blur = annotation;
+                if (!CanSelectAnnotation(annotation) || !annotation.Hit(point, annotation == active)) continue;
+                if (!ToolInfo.IsScreenshotEffect(annotation.Tool)) return annotation;
+                if (effect == null) effect = annotation;
             }
-            return blur;
+            return effect;
+        }
+
+        private bool CanSelectAnnotation(Annotation annotation)
+        {
+            if (tool == Tool.Highlight) return annotation.Tool != Tool.Blur;
+            return annotation.Tool != Tool.Highlight;
         }
 
         private static Cursor HandlePointer(Annotation annotation, int handle)

@@ -5,12 +5,12 @@ using System.Drawing.Drawing2D;
 
 namespace GrayShotV2
 {
-    internal enum Tool { Pencil, Arrow, Frame, Text, Blur, Undo, Copy }
+    internal enum Tool { Pencil, Arrow, Frame, Text, Blur, Undo, Copy, Highlight }
 
     internal static class ToolInfo
     {
         private static readonly string[] Labels = { "Карандаш", "Стрелка", "Рамка", "Текст",
-            "Размытие", "Отменить", "Копировать" };
+            "Размытие", "Отменить", "Копировать", "Хайлайт" };
         public static int Count { get { return Labels.Length; } }
         public static string Label(Tool tool) { return Labels[(int)tool]; }
         public static bool SupportsStroke(Tool tool)
@@ -18,6 +18,7 @@ namespace GrayShotV2
             return tool == Tool.Pencil || tool == Tool.Arrow || tool == Tool.Frame;
         }
 
+        public static bool IsScreenshotEffect(Tool tool) { return tool == Tool.Blur || tool == Tool.Highlight; }
     }
 
     internal struct StrokeStyle
@@ -101,7 +102,7 @@ namespace GrayShotV2
 
         private int PaintMargin { get { return Tool == Tool.Arrow ? Math.Min(Stroke.Width * 5, 24) + 3 : 18; } }
 
-        public bool Hit(Point point)
+        public bool Hit(Point point, bool selected)
         {
             int tolerance = Math.Max(6, Stroke.Width / 2 + 4);
             int margin = Tool == Tool.Arrow ? Math.Max(11, Stroke.Width * 2 + 3) : tolerance;
@@ -115,6 +116,9 @@ namespace GrayShotV2
                 case Tool.Frame:
                     Rectangle inside = Rectangle.Inflate(bounds, -tolerance, -tolerance);
                     return !inside.Contains(point);
+                case Tool.Highlight:
+                    return bounds.Contains(point) &&
+                        (selected || !Rectangle.Inflate(bounds, -tolerance, -tolerance).Contains(point));
                 case Tool.Pencil:
                     if (points.Count == 1) return NearSegment(point, Start, Start, tolerance);
                     for (int i = 1; i < points.Count; i++)
@@ -139,7 +143,7 @@ namespace GrayShotV2
         public Point[] Handles()
         {
             if (Tool == Tool.Arrow) return new[] { Start, End };
-            if (Tool == Tool.Frame || Tool == Tool.Blur)
+            if (Tool == Tool.Frame || ToolInfo.IsScreenshotEffect(Tool))
                 return new[] { bounds.Location, new Point(bounds.Right - 1, bounds.Top),
                     new Point(bounds.Right - 1, bounds.Bottom - 1), new Point(bounds.Left, bounds.Bottom - 1) };
             return NoHandles;
