@@ -11,26 +11,13 @@ namespace GrayShotV2
     {
         private static readonly string[] Labels = { "Карандаш", "Стрелка", "Рамка", "Текст",
             "Размытие", "Отменить", "Копировать" };
-        private static readonly string[] Shortcuts = { "F", "A", "R", "T", "B", "Ctrl+Z", "Ctrl+C" };
         public static int Count { get { return Labels.Length; } }
         public static string Label(Tool tool) { return Labels[(int)tool]; }
-        public static string Shortcut(Tool tool) { return Shortcuts[(int)tool]; }
         public static bool SupportsStroke(Tool tool)
         {
             return tool == Tool.Pencil || tool == Tool.Arrow || tool == Tool.Frame;
         }
 
-        public static bool TryShortcut(char key, out Tool tool)
-        {
-            for (int i = 0; i < Shortcuts.Length; i++)
-                if (Shortcuts[i].Length == 1 && Shortcuts[i][0] == key)
-                {
-                    tool = (Tool)i;
-                    return true;
-                }
-            tool = default(Tool);
-            return false;
-        }
     }
 
     internal struct StrokeStyle

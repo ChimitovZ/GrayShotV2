@@ -23,6 +23,9 @@ namespace GrayShotV2
         private static Color frameColor = StrokeStyle.Default.Color;
         private readonly Bitmap desktop;
         private readonly Point desktopOrigin;
+        private readonly ShotSettings settings;
+        private readonly Tool[] menuTools;
+        private readonly string[] shortcutLabels;
         private readonly List<Annotation> annotations = new List<Annotation>();
         private readonly Stack<Action> history = new Stack<Action>();
         private readonly StrokeStyle[] toolStrokes = { StrokeStyle.Default, StrokeStyle.Default,
@@ -64,9 +67,12 @@ namespace GrayShotV2
         private StrokeStyle CurrentStroke { get { return StrokeObject == null ? toolStrokes[(int)tool] : StrokeObject.Stroke; } }
         public bool Busy { get; private set; }
 
-        public Overlay(Bitmap desktop, Rectangle bounds)
+        public Overlay(Bitmap desktop, Rectangle bounds, ShotSettings settings)
         {
             this.desktop = desktop;
+            this.settings = settings;
+            menuTools = settings.MenuTools();
+            shortcutLabels = Array.ConvertAll(settings.ToolKeys, Hotkeys.Label);
             desktopOrigin = bounds.Location;
             Text = "GrayShotV2 — Снимок";
             FormBorderStyle = FormBorderStyle.None;
@@ -308,21 +314,13 @@ namespace GrayShotV2
         private void DrawToolHint(Graphics g)
         {
             Annotation target = StrokeObject;
-            string shortcut = target == null ? ToolInfo.Shortcut(tool) : "";
-            string label = target == null ? ToolInfo.Label(tool) :
+            string label = target == null ? shortcutLabels[(int)tool] + "  " + ToolInfo.Label(tool) :
                 "Объект · " + ToolInfo.Label(target.Tool);
             var textArea = Rectangle.Inflate(toolHintArea, -9, 0);
             DrawPanel(g, toolHintArea);
             TextFormatFlags flags = TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding |
-                TextFormatFlags.PreserveGraphicsClipping;
-            if (shortcut.Length != 0)
-            {
-                var keyArea = new Rectangle(textArea.X, textArea.Y, 21, textArea.Height);
-                TextRenderer.DrawText(g, shortcut, menuFont, keyArea, appearance.Text, flags);
-                textArea.X += keyArea.Width;
-                textArea.Width -= keyArea.Width;
-            }
-            textArea.Width = Math.Min(textArea.Width, 136 - (shortcut.Length == 0 ? 0 : 21));
+                TextFormatFlags.PreserveGraphicsClipping | TextFormatFlags.EndEllipsis;
+            textArea.Width = Math.Min(textArea.Width, 130);
             TextRenderer.DrawText(g, label, menuFont, textArea, appearance.Text, flags);
             if (HasStrokePalette) StrokePalette.Draw(g, toolHintArea, menuFont, CurrentStroke, appearance);
         }
@@ -396,10 +394,10 @@ namespace GrayShotV2
                 FinishText(true);
                 if (e.Button != MouseButtons.Right) return;
             }
-            if (e.Button == MouseButtons.Right && selected && pending == null && !dragging)
+            if (e.Button == MouseButtons.Right && selected && pending == null && !dragging && menuTools.Length > 0)
             {
                 ringOrigin = PointToScreen(e.Location);
-                ring = new RadialMenu(e.Location, MonitorBounds(e.Location));
+                ring = new RadialMenu(e.Location, MonitorBounds(e.Location), menuTools, shortcutLabels);
                 Capture = true;
                 Cursor = Cursors.Default;
                 UpdateLens(e.Location, false);
@@ -465,7 +463,7 @@ namespace GrayShotV2
             else if (pending != null) Invalidate(pending.Update(Clamp(point, selection)));
             else if (ring != null)
             {
-                int hover = ring.Hit(point);
+                Tool? hover = ring.Hit(point);
                 if (hover == ring.Hover) return;
                 ring.Hover = hover;
                 Invalidate(ring.Bounds);
@@ -489,10 +487,10 @@ namespace GrayShotV2
                 if (e.Button == MouseButtons.Right)
                 {
                     // A quick tap near an edge can queue its release before the cursor is centered.
-                    bool unmovedTap = ring.Hover < 0 && e.Location == PointToClient(ringOrigin);
-                    int item = unmovedTap ? -1 : ring.Hit(e.Location);
+                    bool unmovedTap = !ring.Hover.HasValue && e.Location == PointToClient(ringOrigin);
+                    Tool? item = unmovedTap ? null : ring.Hit(e.Location);
                     CloseRing();
-                    if (item >= 0) SelectTool((Tool)item);
+                    if (item.HasValue) SelectTool(item.Value);
                 }
                 return;
             }
@@ -584,17 +582,20 @@ namespace GrayShotV2
             if (ring == null && MoveCursorByKey(keyData)) return true;
             if (selected && pending == null && !dragging && resizeDirection.IsEmpty)
             {
-                Tool shortcut;
-                if ((keyData & Keys.Modifiers) == Keys.None && ToolInfo.TryShortcut((char)keyData, out shortcut))
+                int shortcut = Array.IndexOf(settings.ToolKeys, keyData);
+                if (shortcut >= 0)
                 {
                     CloseRing();
-                    SelectTool(shortcut);
+                    SelectTool((Tool)shortcut);
                     return true;
                 }
                 if (ring != null) return true;
-                if (keyData == (Keys.Control | Keys.Z)) { Undo(); return true; }
                 if (keyData == Keys.Delete && active != null) { DeleteActive(); return true; }
-                if (keyData == (Keys.Control | Keys.C) || keyData == Keys.Enter) { Copy(); return true; }
+                if (keyData == Keys.Enter && settings.ToolKeys[(int)Tool.Copy] == ShotSettings.DefaultCopyKey)
+                {
+                    Copy();
+                    return true;
+                }
             }
             return base.ProcessCmdKey(ref msg, keyData);
         }
@@ -1078,7 +1079,7 @@ namespace GrayShotV2
                     MemoryStream encoded = ShotExport.EncodeDib(result);
                     try
                     {
-                        path = ShotExport.SavePng(result, ShotExport.PicturesRoot(), timestamp);
+                        path = ShotExport.SavePng(result, settings.PicturesRoot(), settings.NamePattern, timestamp);
                         return encoded;
                     }
                     catch

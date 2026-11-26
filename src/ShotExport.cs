@@ -23,11 +23,11 @@ namespace GrayShotV2
             return Path.Combine(pictures, "GrayShotV2");
         }
 
-        public static string SavePng(Bitmap image, string root, DateTime time)
+        public static string SavePng(Bitmap image, string root, string pattern, DateTime time)
         {
+            string name = ShotSettings.FileStem(pattern, time);
             string folder = Path.Combine(root, time.ToString("yyyy-MM", CultureInfo.InvariantCulture));
             Directory.CreateDirectory(folder);
-            string name = "GrayShotV2_" + time.ToString("yyyy-MM-dd_HH-mm-ss-fff", CultureInfo.InvariantCulture);
             string temp = Path.Combine(folder, Guid.NewGuid().ToString("N") + ".tmp");
             try
             {

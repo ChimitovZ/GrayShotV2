@@ -8,25 +8,29 @@ using System.Windows.Forms;
 
 namespace GrayShotV2
 {
-    internal sealed class PrintScreenHook : IDisposable
+    internal sealed class HotkeyHook : IDisposable
     {
         private readonly Control dispatcher;
         private readonly Action capture;
         private readonly Thread thread;
         private readonly HookProc callback;
         private uint threadId;
-        private bool pressed;
-        private bool handled;
+        private readonly bool[] pressed = new bool[256];
+        private readonly bool[] handled = new bool[256];
+        private volatile Recording recording;
+        public volatile Keys Shortcut;
+        public volatile bool Paused;
         public int Error { get; private set; }
 
-        public PrintScreenHook(Control dispatcher, Action capture)
+        public HotkeyHook(Control dispatcher, Keys shortcut, Action capture)
         {
             this.dispatcher = dispatcher;
             this.capture = capture;
+            Shortcut = shortcut;
             callback = OnKey;
             using (var ready = new ManualResetEventSlim())
             {
-                thread = new Thread(() => Listen(ready)) { IsBackground = true, Name = "PrtScr hook" };
+                thread = new Thread(() => Listen(ready)) { IsBackground = true, Name = "GrayShot hotkey" };
                 thread.Start();
                 ready.Wait();
             }
@@ -50,35 +54,68 @@ namespace GrayShotV2
 
         private IntPtr OnKey(int code, IntPtr message, IntPtr data)
         {
-            if (code == 0 && Marshal.ReadInt32(data) == 0x2c)
+            if (code == 0)
             {
-                long keyMessage = message.ToInt64();
-                if (keyMessage == 0x100 || keyMessage == 0x104)
+                int key = Marshal.ReadInt32(data);
+                if (key > 0 && key < pressed.Length)
                 {
-                    if (!pressed)
+                    long keyMessage = message.ToInt64();
+                    if (keyMessage == 0x100 || keyMessage == 0x104)
                     {
-                        pressed = true;
-                        handled = keyMessage == 0x100 && !IsDown(0x10) && !IsDown(0x11) &&
-                                  !IsDown(0x12) && !IsDown(0x5b) && !IsDown(0x5c);
-                        if (handled)
+                        if (!pressed[key])
                         {
-                            try { dispatcher.BeginInvoke(capture); }
-                            catch (InvalidOperationException) { handled = false; }
+                            pressed[key] = true;
+                            if (!Hotkeys.IsModifier((Keys)key)) handled[key] = HandleKey((Keys)key);
                         }
+                        if (handled[key]) return new IntPtr(1);
                     }
-                    if (handled) return new IntPtr(1);
-                }
-                else if (keyMessage == 0x101 || keyMessage == 0x105)
-                {
-                    bool swallow = handled;
-                    pressed = handled = false;
-                    if (swallow) return new IntPtr(1);
+                    else if (keyMessage == 0x101 || keyMessage == 0x105)
+                    {
+                        bool swallow = handled[key];
+                        pressed[key] = handled[key] = false;
+                        if (swallow) return new IntPtr(1);
+                    }
                 }
             }
             return CallNextHookEx(IntPtr.Zero, code, message, data);
         }
 
-        private static bool IsDown(int key) { return GetAsyncKeyState(key) < 0; }
+        private bool HandleKey(Keys key)
+        {
+            Recording current = recording;
+            if ((Paused && current == null) || (current == null && key != (Shortcut & Keys.KeyCode))) return false;
+            if (IsDown(Keys.LWin) || IsDown(Keys.RWin)) return false;
+            if (IsDown(Keys.ControlKey)) key |= Keys.Control;
+            if (IsDown(Keys.ShiftKey)) key |= Keys.Shift;
+            if (IsDown(Keys.Menu)) key |= Keys.Alt;
+
+            try
+            {
+                if (current != null && GetForegroundWindow() == current.Window)
+                {
+                    if (Hotkeys.IsWindowShortcut(key)) return false;
+                    dispatcher.BeginInvoke((Action)delegate
+                    {
+                        if (recording == current) current.Receive(key);
+                    });
+                    return true;
+                }
+                if (!Paused && key == Shortcut)
+                {
+                    dispatcher.BeginInvoke(capture);
+                    return true;
+                }
+            }
+            catch (InvalidOperationException) { }
+            return false;
+        }
+
+        public void Record(IntPtr window, Action<Keys> receive)
+        {
+            recording = receive == null ? null : new Recording { Window = window, Receive = receive };
+        }
+
+        private static bool IsDown(Keys key) { return GetAsyncKeyState((int)key) < 0; }
 
         public void Dispose()
         {
@@ -101,6 +138,12 @@ namespace GrayShotV2
             public uint Private;
         }
 
+        private sealed class Recording
+        {
+            public IntPtr Window;
+            public Action<Keys> Receive;
+        }
+
         private delegate IntPtr HookProc(int code, IntPtr message, IntPtr data);
         [DllImport("user32.dll", SetLastError = true)]
         private static extern IntPtr SetWindowsHookEx(int id, HookProc proc, IntPtr module, uint thread);
@@ -110,6 +153,8 @@ namespace GrayShotV2
         private static extern IntPtr CallNextHookEx(IntPtr hook, int code, IntPtr message, IntPtr data);
         [DllImport("user32.dll")]
         private static extern short GetAsyncKeyState(int key);
+        [DllImport("user32.dll")]
+        private static extern IntPtr GetForegroundWindow();
         [DllImport("user32.dll")]
         private static extern bool PeekMessage(out MessageData message, IntPtr window, uint min, uint max, uint remove);
         [DllImport("user32.dll")]

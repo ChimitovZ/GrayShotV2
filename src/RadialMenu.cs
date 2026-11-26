@@ -7,16 +7,21 @@ namespace GrayShotV2
 {
     internal sealed class RadialMenu : IDisposable
     {
-        private static readonly float Step = 360f / ToolInfo.Count;
         private const int EdgeMargin = 15;
+        private readonly Tool[] tools;
+        private readonly string[] shortcuts;
+        private readonly float step;
         private readonly int outer, inner, reach;
         private readonly Font font, caption;
         public Point Center { get; private set; }
-        public int Hover = -1;
+        public Tool? Hover;
         public Rectangle Bounds { get { return Circle(outer + EdgeMargin); } }
 
-        public RadialMenu(Point origin, Rectangle monitor)
+        public RadialMenu(Point origin, Rectangle monitor, Tool[] tools, string[] shortcuts)
         {
+            this.tools = tools;
+            this.shortcuts = shortcuts;
+            step = 360f / tools.Length;
             outer = Math.Min(270, (int)(Math.Min(monitor.Width, monitor.Height) * 0.195));
             int margin = outer + EdgeMargin;
             Center = new Point(Math.Max(monitor.Left + margin, Math.Min(origin.X, monitor.Right - margin)),
@@ -32,19 +37,19 @@ namespace GrayShotV2
             return new Rectangle(Center.X - radius, Center.Y - radius, 2 * radius, 2 * radius);
         }
 
-        public int Hit(Point point)
+        public Tool? Hit(Point point)
         {
             double x = point.X - Center.X;
             double y = point.Y - Center.Y;
             double distance = x * x + y * y;
-            if (distance < inner * inner || distance > reach * reach) return -1;
+            if (distance < inner * inner || distance > reach * reach) return null;
             double angle = (Math.Atan2(y, x) * 180 / Math.PI + 450) % 360;
-            if (Hover >= 0)
+            if (Hover.HasValue)
             {
-                double delta = Math.Abs(angle - Hover * Step);
-                if (Math.Min(delta, 360 - delta) <= Step / 2 + 4) return Hover;
+                double delta = Math.Abs(angle - Array.IndexOf(tools, Hover.Value) * step);
+                if (Math.Min(delta, 360 - delta) <= step / 2 + 4) return Hover;
             }
-            return (int)((angle + Step / 2) % 360 / Step);
+            return tools[(int)((angle + step / 2) % 360 / step)];
         }
 
         public void Draw(Graphics g, Tool selected, WindowsAppearance appearance, Action<Graphics, Rectangle> drawBlur)
@@ -80,17 +85,17 @@ namespace GrayShotV2
                 g.DrawEllipse(border, hub);
 
                 int radius = (int)(outer * 0.66);
-                for (int i = 0; i < ToolInfo.Count; i++)
+                for (int i = 0; i < tools.Length; i++)
                 {
-                    Tool tool = (Tool)i;
-                    float angle = -90 + i * Step;
-                    float start = angle - Step / 2;
-                    bool isHovered = i == Hover;
+                    Tool tool = tools[i];
+                    float angle = -90 + i * step;
+                    float start = angle - step / 2;
+                    bool isHovered = tool == Hover;
                     bool isActive = tool == selected;
                     using (var path = new GraphicsPath())
                     {
-                        path.AddArc(rim, start + 0.9f, Step - 1.8f);
-                        path.AddArc(hub, start + Step - 2.7f, -Step + 5.4f);
+                        path.AddArc(rim, start + 0.9f, step - 1.8f);
+                        path.AddArc(hub, start + step - 2.7f, -step + 5.4f);
                         path.CloseFigure();
                         g.FillPath(isHovered ? SystemBrushes.Highlight : inset, path);
                         g.DrawPath(isHovered || isActive ? SystemPens.Highlight : border, path);
@@ -101,13 +106,13 @@ namespace GrayShotV2
                     DrawIcon(g, tool, label.X, label.Y - font.Height / 2 - 5, outer / 205f, ink);
                     DrawLabel(g, ToolInfo.Label(tool), font, ink,
                         new Rectangle(label.X - radius / 2, label.Y, radius, font.Height + 2));
-                    DrawLabel(g, ToolInfo.Shortcut(tool), caption, ink,
+                    DrawLabel(g, shortcuts[(int)tool], caption, ink,
                         new Rectangle(label.X - radius / 2, label.Y + font.Height, radius, caption.Height + 2));
                 }
             }
-            DrawLabel(g, Hover < 0 ? "Выбор" : ToolInfo.Label((Tool)Hover), font, appearance.Text,
+            DrawLabel(g, Hover.HasValue ? ToolInfo.Label(Hover.Value) : "Выбор", font, appearance.Text,
                 new Rectangle(hub.X, Center.Y - font.Height, hub.Width, font.Height));
-            DrawLabel(g, Hover < 0 ? "Esc · отмена" : "Отпустите ПКМ", caption, appearance.Text,
+            DrawLabel(g, Hover.HasValue ? "Отпустите ПКМ" : "Esc · отмена", caption, appearance.Text,
                 new Rectangle(hub.X, Center.Y + 2, hub.Width, caption.Height + 2));
             g.Restore(state);
         }
@@ -164,7 +169,8 @@ namespace GrayShotV2
         {
             TextRenderer.DrawText(g, text, face, bounds, color,
                 TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding |
-                TextFormatFlags.PreserveGraphicsClipping | TextFormatFlags.PreserveGraphicsTranslateTransform);
+                TextFormatFlags.PreserveGraphicsClipping | TextFormatFlags.PreserveGraphicsTranslateTransform |
+                TextFormatFlags.EndEllipsis);
         }
 
         public void Dispose()

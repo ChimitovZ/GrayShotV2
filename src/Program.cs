@@ -4,6 +4,7 @@ using System.Diagnostics;
 using System.Drawing;
 using System.IO;
 using System.Threading;
+using System.Threading.Tasks;
 using System.Windows.Forms;
 
 namespace GrayShotV2
@@ -28,59 +29,114 @@ namespace GrayShotV2
     {
         private readonly Control dispatcher = new Control();
         private readonly NotifyIcon tray;
-        private readonly ContextMenuStrip menu = new ContextMenuStrip { RenderMode = ToolStripRenderMode.System };
-        private readonly PrintScreenHook hook;
+        private readonly ContextMenuStrip trayMenu;
+        private readonly ContextMenuStrip settingsActions;
+        private readonly HotkeyHook hook;
+        private ShotSettings settings = ShotSettings.Load(ShotSettings.FilePath);
+        private SettingsWindow settingsWindow;
         private Overlay overlay;
         private bool updating;
 
         public TrayContext()
         {
             dispatcher.CreateControl();
-            menu.Items.Add("Сделать снимок", null, delegate { Capture(); });
-            menu.Items.Add("Открыть папку снимков", null, delegate { OpenPictures(); });
-            var updateItem = menu.Items.Add("Проверить обновления");
-            updateItem.Click += async delegate
-            {
-                if (overlay != null)
-                {
-                    Report("Завершите работу со снимком перед обновлением.");
-                    return;
-                }
-                updating = true;
-                updateItem.Enabled = false;
-                bool restart = false;
-                try
-                {
-                    restart = await Updater.CheckAndPrepareAsync();
-                }
-                catch (Exception error)
-                {
-                    MessageBox.Show("Не удалось обновить GrayShotV2. " + error.Message,
-                        "GrayShotV2", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-                }
-                finally
-                {
-                    updating = false;
-                    updateItem.Enabled = true;
-                }
-                if (restart) ExitThread();
-            };
-            menu.Items.Add(new ToolStripSeparator());
-            menu.Items.Add("Выход", null, delegate { ExitThread(); });
-            menu.Opening += delegate { ApplyMenuAppearance(WindowsAppearance.Read()); };
+            trayMenu = CreateMenu(true);
+            settingsActions = CreateMenu(false);
             tray = new NotifyIcon
             {
-                Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath), Text = "GrayShotV2 · PrtScr",
-                ContextMenuStrip = menu, Visible = true
+                Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath), ContextMenuStrip = trayMenu, Visible = true
             };
-            tray.DoubleClick += delegate { Capture(); };
-            hook = new PrintScreenHook(dispatcher, Capture);
+            UpdateTrayText();
+            tray.MouseDoubleClick += delegate(object sender, MouseEventArgs e)
+            {
+                if (e.Button == MouseButtons.Left) Capture();
+            };
+            hook = new HotkeyHook(dispatcher, settings.CaptureKey, Capture);
             if (hook.Error != 0)
-                Report("Клавиша PrtScr недоступна. Снимок можно сделать через меню в трее. " +
+                Report("Глобальная клавиша недоступна. Снимок можно сделать двойным щелчком по значку в трее. " +
                        new Win32Exception(hook.Error).Message);
         }
 
-        private void ApplyMenuAppearance(WindowsAppearance appearance)
+        private ContextMenuStrip CreateMenu(bool includeSettings)
+        {
+            var menu = new ContextMenuStrip { RenderMode = ToolStripRenderMode.System };
+            menu.Items.Add("Сделать снимок", null, delegate { Capture(); });
+            menu.Items.Add("Открыть папку снимков", null, delegate { OpenPictures(); });
+            var updateItem = menu.Items.Add("Проверить обновления");
+            updateItem.Click += async delegate { await CheckForUpdates(); };
+            if (includeSettings) menu.Items.Add("Настройки", null, delegate { ShowSettings(); });
+            menu.Items.Add(new ToolStripSeparator());
+            menu.Items.Add("Выход", null, delegate { ExitThread(); });
+            menu.Opening += delegate
+            {
+                updateItem.Enabled = !updating;
+                ApplyMenuAppearance(menu, WindowsAppearance.Read());
+            };
+            return menu;
+        }
+
+        private async Task CheckForUpdates()
+        {
+            if (updating) return;
+            if (overlay != null)
+            {
+                Report("Завершите работу со снимком перед обновлением.");
+                return;
+            }
+            updating = true;
+            bool restart = false;
+            try
+            {
+                restart = await Updater.CheckAndPrepareAsync();
+            }
+            catch (Exception error)
+            {
+                MessageBox.Show("Не удалось обновить GrayShotV2. " + error.Message,
+                    "GrayShotV2", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            }
+            finally { updating = false; }
+            if (restart) ExitThread();
+        }
+
+        private void UpdateTrayText()
+        {
+            tray.Text = "GrayShotV2 · " + Hotkeys.Label(settings.CaptureKey);
+        }
+
+        private void ShowSettings()
+        {
+            if (overlay != null || updating) return;
+            try
+            {
+                if (settingsWindow == null)
+                {
+                    settingsWindow = new SettingsWindow(settings, hook, settingsActions, SaveSettings) { Icon = tray.Icon };
+                    settingsWindow.FormClosed += delegate { settingsWindow = null; hook.Paused = false; };
+                    hook.Paused = true;
+                }
+                if (!settingsWindow.Visible) settingsWindow.Show();
+                if (settingsWindow.WindowState == FormWindowState.Minimized)
+                    settingsWindow.WindowState = FormWindowState.Normal;
+                settingsWindow.Activate();
+            }
+            catch (Exception error)
+            {
+                if (settingsWindow != null) settingsWindow.Dispose();
+                settingsWindow = null;
+                hook.Paused = false;
+                Report("Не удалось открыть настройки. " + error.Message);
+            }
+        }
+
+        private void SaveSettings(ShotSettings changed)
+        {
+            changed.Save(ShotSettings.FilePath);
+            settings = changed;
+            hook.Shortcut = settings.CaptureKey;
+            UpdateTrayText();
+        }
+
+        private static void ApplyMenuAppearance(ContextMenuStrip menu, WindowsAppearance appearance)
         {
             if (appearance.Dark)
                 menu.Renderer = new DarkTrayMenuRenderer(appearance);
@@ -93,14 +149,20 @@ namespace GrayShotV2
         private void Capture()
         {
             if (overlay != null || updating) return;
+            bool restoreSettings = settingsWindow != null && settingsWindow.Visible;
+            if (restoreSettings) settingsWindow.Hide();
             Bitmap desktop = null;
             try
             {
                 var bounds = SystemInformation.VirtualScreen;
                 desktop = DesktopCapture.Take(bounds);
-                overlay = new Overlay(desktop, bounds);
+                overlay = new Overlay(desktop, bounds, settings);
                 desktop = null;
-                overlay.FormClosed += delegate { overlay = null; };
+                overlay.FormClosed += delegate
+                {
+                    overlay = null;
+                    if (restoreSettings && settingsWindow != null) ShowSettings();
+                };
                 overlay.Show();
                 overlay.Activate();
             }
@@ -109,6 +171,7 @@ namespace GrayShotV2
                 if (desktop != null) desktop.Dispose();
                 if (overlay != null) overlay.Dispose();
                 overlay = null;
+                if (restoreSettings && settingsWindow != null) ShowSettings();
                 Report("Не удалось открыть снимок. " + error.Message);
             }
         }
@@ -117,9 +180,9 @@ namespace GrayShotV2
         {
             try
             {
-                string path = ShotExport.PicturesRoot();
+                string path = settings.PicturesRoot();
                 Directory.CreateDirectory(path);
-                using (Process.Start("explorer.exe", "\"" + path + "\"")) { }
+                using (Process.Start(new ProcessStartInfo(path) { UseShellExecute = true })) { }
             }
             catch (Exception error) { Report(error.Message); }
         }
@@ -132,6 +195,7 @@ namespace GrayShotV2
         protected override void ExitThreadCore()
         {
             if (updating || (overlay != null && overlay.Busy)) return;
+            if (settingsWindow != null) settingsWindow.Close();
             if (overlay != null) overlay.Close();
             base.ExitThreadCore();
         }
@@ -140,11 +204,13 @@ namespace GrayShotV2
         {
             if (disposing)
             {
+                if (settingsWindow != null) settingsWindow.Close();
                 hook.Dispose();
                 var icon = tray.Icon;
                 tray.Dispose();
                 if (icon != null) icon.Dispose();
-                menu.Dispose();
+                trayMenu.Dispose();
+                settingsActions.Dispose();
                 dispatcher.Dispose();
             }
             base.Dispose(disposing);
